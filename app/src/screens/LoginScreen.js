@@ -12,7 +12,7 @@ import {
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../firebase';
 
-export default function LoginScreen() {
+export default function LoginScreen({ navigation }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -74,6 +74,16 @@ export default function LoginScreen() {
             <Text style={styles.buttonText}>Se connecter</Text>
           )}
         </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.registerLink}
+          onPress={() => navigation.navigate('Register')}
+        >
+          <Text style={styles.registerLinkText}>
+            Pas encore de compte ?{' '}
+            <Text style={styles.registerLinkAccent}>Créer un compte</Text>
+          </Text>
+        </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
   );
@@ -128,6 +138,18 @@ const styles = StyleSheet.create({
   buttonText: {
     color: '#fff',
     fontSize: 16,
+    fontWeight: '600',
+  },
+  registerLink: {
+    marginTop: 28,
+    alignItems: 'center',
+  },
+  registerLinkText: {
+    color: '#888',
+    fontSize: 14,
+  },
+  registerLinkAccent: {
+    color: '#4f6ef7',
     fontWeight: '600',
   },
 });

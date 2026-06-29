@@ -2,6 +2,7 @@ import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAuth } from '../contexts/AuthContext';
 import LoginScreen from '../screens/LoginScreen';
+import RegisterScreen from '../screens/RegisterScreen';
 import TabNavigator from './TabNavigator';
 import { ActivityIndicator, View } from 'react-native';
 
@@ -24,7 +25,10 @@ export default function RootNavigator() {
       {user ? (
         <Stack.Screen name="Main" component={TabNavigator} />
       ) : (
-        <Stack.Screen name="Login" component={LoginScreen} />
+        <>
+          <Stack.Screen name="Register" component={RegisterScreen} />
+          <Stack.Screen name="Login" component={LoginScreen} />
+        </>
       )}
     </Stack.Navigator>
   );

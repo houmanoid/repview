@@ -1,32 +1,146 @@
-/**
- * Import function triggers from their respective submodules:
- *
- * const {onCall} = require("firebase-functions/v2/https");
- * const {onDocumentWritten} = require("firebase-functions/v2/firestore");
- *
- * See a full list of supported triggers at https://firebase.google.com/docs/functions
- */
+const { setGlobalOptions } = require('firebase-functions');
+const { onCall, HttpsError } = require('firebase-functions/v2/https');
+const { initializeApp } = require('firebase-admin/app');
+const { getFirestore, FieldValue } = require('firebase-admin/firestore');
+const { getAuth } = require('firebase-admin/auth');
+const crypto = require('crypto');
+const twilio = require('twilio');
 
-const {setGlobalOptions} = require("firebase-functions");
-const {onRequest} = require("firebase-functions/https");
-const logger = require("firebase-functions/logger");
+initializeApp();
+const db = getFirestore();
 
-// For cost control, you can set the maximum number of containers that can be
-// running at the same time. This helps mitigate the impact of unexpected
-// traffic spikes by instead downgrading performance. This limit is a
-// per-function limit. You can override the limit for each function using the
-// `maxInstances` option in the function's options, e.g.
-// `onRequest({ maxInstances: 5 }, (req, res) => { ... })`.
-// NOTE: setGlobalOptions does not apply to functions using the v1 API. V1
-// functions should each use functions.runWith({ maxInstances: 10 }) instead.
-// In the v1 API, each function can only serve one request per container, so
-// this will be the maximum concurrent request count.
 setGlobalOptions({ maxInstances: 10 });
 
-// Create and deploy your first functions
-// https://firebase.google.com/docs/functions/get-started
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-// exports.helloWorld = onRequest((request, response) => {
-//   logger.info("Hello logs!", {structuredData: true});
-//   response.send("Hello from Firebase!");
-// });
+async function assertAdmin(uid) {
+  const snap = await db.collection('users').doc(uid).get();
+  if (!snap.exists || snap.data().role !== 'admin') {
+    throw new HttpsError('permission-denied', 'Accès réservé aux administrateurs.');
+  }
+}
+
+// ── SMS ───────────────────────────────────────────────────────────────────────
+
+exports.sendSMS = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Authentification requise.');
+  }
+
+  const uid = request.auth.uid;
+  const { clientName = 'Cher client', phoneNumber } = request.data;
+
+  if (!phoneNumber) {
+    throw new HttpsError('invalid-argument', 'Numéro de téléphone requis.');
+  }
+
+  const userDoc = await db.collection('users').doc(uid).get();
+  if (!userDoc.exists) {
+    throw new HttpsError('not-found', 'Utilisateur introuvable.');
+  }
+  if (userDoc.data().plan === 'free') {
+    throw new HttpsError('permission-denied', 'Abonnement requis pour envoyer des SMS.');
+  }
+
+  const phoneHash = crypto.createHash('sha256').update(phoneNumber).digest('hex');
+  const phoneLast4 = phoneNumber.replace(/\D/g, '').slice(-4);
+
+  // Un seul avis par client — on utilise le hash comme ID de document
+  const requestRef = db
+    .collection('users').doc(uid)
+    .collection('requests').doc(phoneHash);
+
+  await requestRef.set({
+    clientName,
+    phoneHash,
+    phoneLast4,
+    status: 'sent',
+    sentAt: FieldValue.serverTimestamp(),
+    ratedAt: null,
+    rating: null,
+  }, { merge: true });
+
+  const requestId = phoneHash;
+  const ratingUrl = `https://repview.web.app/rate?id=${requestId}&u=${uid}`;
+  const smsBody =
+    `${clientName}, merci pour votre confiance ! ` +
+    `Donnez-nous votre avis en 10 secondes 👉 ${ratingUrl}\n` +
+    `STOP au ${process.env.TWILIO_PHONE_NUMBER}`;
+
+  const twilioClient = twilio(
+    process.env.TWILIO_ACCOUNT_SID,
+    process.env.TWILIO_AUTH_TOKEN,
+  );
+
+  try {
+    await twilioClient.messages.create({
+      body: smsBody,
+      from: process.env.TWILIO_PHONE_NUMBER,
+      to: phoneNumber,
+    });
+  } catch (err) {
+    throw new HttpsError('internal', "Échec de l'envoi du SMS. Veuillez réessayer.");
+  }
+
+  return { success: true, requestId };
+});
+
+// ── Admin : créer un commerçant ───────────────────────────────────────────────
+
+exports.adminCreateMerchant = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Authentification requise.');
+  await assertAdmin(request.auth.uid);
+
+  const { email, password, businessName, plan = 'free', baseline } = request.data;
+
+  if (!email || !password || !businessName) {
+    throw new HttpsError('invalid-argument', 'Champs obligatoires manquants.');
+  }
+
+  let userRecord;
+  try {
+    userRecord = await getAuth().createUser({ email, password });
+  } catch (err) {
+    if (err.code === 'auth/email-already-exists') {
+      throw new HttpsError('already-exists', 'Cet email est déjà utilisé.');
+    }
+    throw new HttpsError('internal', 'Erreur lors de la création du compte.');
+  }
+
+  await db.collection('users').doc(userRecord.uid).set({
+    email,
+    businessName,
+    plan,
+    role: 'merchant',
+    googleReviewUrl: '',
+    stripeCustomerId: '',
+    disabled: false,
+    baseline: baseline || null,
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  return { uid: userRecord.uid };
+});
+
+// ── Admin : modifier un commerçant ───────────────────────────────────────────
+
+exports.adminUpdateMerchant = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Authentification requise.');
+  await assertAdmin(request.auth.uid);
+
+  const { uid, plan, disabled } = request.data;
+  if (!uid) throw new HttpsError('invalid-argument', 'UID requis.');
+
+  const updates = { updatedAt: FieldValue.serverTimestamp() };
+
+  if (plan !== undefined) updates.plan = plan;
+
+  if (disabled !== undefined) {
+    updates.disabled = disabled;
+    await getAuth().updateUser(uid, { disabled });
+  }
+
+  await db.collection('users').doc(uid).update(updates);
+  return { success: true };
+});

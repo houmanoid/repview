@@ -5,12 +5,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Remplacer par les vraies valeurs depuis la console Firebase
 const firebaseConfig = {
-  apiKey: 'FIREBASE_API_KEY',
-  authDomain: 'FIREBASE_AUTH_DOMAIN',
-  projectId: 'FIREBASE_PROJECT_ID',
-  storageBucket: 'FIREBASE_STORAGE_BUCKET',
-  messagingSenderId: 'FIREBASE_MESSAGING_SENDER_ID',
-  appId: 'FIREBASE_APP_ID',
+  apiKey: 'AIzaSyCN51wTRB0FEf7OH-C9TUwOW8aUsUizcUc',
+  authDomain: 'repview-7c5c1.firebaseapp.com',
+  projectId: 'repview-7c5c1',
+  storageBucket: 'repview-7c5c1.firebasestorage.app',
+  messagingSenderId: '375937108465',
+  appId: '1:375937108465:web:1ecb7c8a8667042e5f9c50',
 };
 
 const isFirstInit = getApps().length === 0;
@@ -23,3 +23,6 @@ export const auth = isFirstInit
   : getAuth(app);
 
 export const db = getFirestore(app);
+
+import { getFunctions } from 'firebase/functions';
+export const functions = getFunctions(app);
